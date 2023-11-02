@@ -1,0 +1,1482 @@
+---
+title: "Stat Learning NIRS adversity modeling"
+author: "Eily Sullivan"
+date: "4/4/2022"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Exploratory Data Analysis of Adversity and Outcome Measures
+
+```{r Load packages, include=FALSE}
+rm(list=ls())
+library(tidyverse)
+library(haven)
+library(dplyr)
+library(foreign)
+library(lmtest)
+library(lme4)
+library(lmerTest)
+library(ggplot2)
+#install.packages("standardize")
+library(standardize)
+library(ggthemes)
+library(texreg)
+library(rockchalk)
+library(stargazer)
+#install.packages("Hmisc")
+library(Hmisc)
+#install.packages("gtsummary")
+library(gtsummary)
+#remotes::install_github("ddsjoberg/gtsummary")
+#install.packages("arsenal")
+library(arsenal)
+#install.packages("corrplot")
+library(corrplot)
+#install.packages("readxl")
+library(readxl)
+library(writexl)
+#install.packages("correlation_matrix")
+library(psych)
+library(datasets)
+#install.packages("GGally")
+library(GGally)
+
+```
+
+##2 yr LI & MI and 5 yr LI & MI
+
+```{r}
+#import the dataset
+#filepath: "Dropbox (BCH)/BEAN NIRS/FINAL_manuscript_Stat_Learning/Datasets_Programs/SL_Incl_Subs_Adversity_Allvariables.xlsx"
+SL_Incl_Subs_Adversity_Allvariables <- read_excel("SL_Incl_Subs_Adversity_Allvariables FINAL DATASET FOR ANALYSES.xlsx")
+dat <- SL_Incl_Subs_Adversity_Allvariables
+
+#create subset with no premature
+dat$Premature <- as.factor(dat$Premature)
+
+
+
+```
+
+```{r}
+#number of included subjects
+num_subs <- nrow(dat)
+#227 subjects total
+table(dat$Cohort)
+#146 LI and 81 MI subjects overall
+table(dat$Age_Cohort)
+#102 2yrs and 125 5yrs
+table(dat$Cohort, dat$Age_Cohort)
+#63 2yrLI, 83 5yrLI, 39 2yrMI, 42 5yrMI
+```
+
+```{r}
+#make subsets of data for different cohorts and ages
+twoyrdata <- subset(dat, Age_Cohort == "2yr")
+fiveyrdata <- subset(dat, Age_Cohort == "5yr")
+
+#sum z-scores of subscales to create composite score of Mullen
+#create z scores for subscales of Mullen
+twoyrdata$gmraw_24_Z <- scale(twoyrdata$gmraw_24, center = TRUE, scale = TRUE)
+twoyrdata$vrraw_24_Z <- scale(twoyrdata$vrraw_24, center = TRUE, scale = TRUE)
+twoyrdata$fmraw_24_Z <- scale(twoyrdata$fmraw_24, center = TRUE, scale = TRUE)
+twoyrdata$rlraw_24_Z <- scale(twoyrdata$rlraw_24, center = TRUE, scale = TRUE)
+twoyrdata$elraw_24_Z <- scale(twoyrdata$elraw_24, center = TRUE, scale = TRUE)
+
+hist(twoyrdata$gmraw_24_Z)
+hist(twoyrdata$vrraw_24_Z)
+hist(twoyrdata$fmraw_24_Z)
+hist(twoyrdata$rlraw_24_Z)
+hist(twoyrdata$elraw_24_Z)
+twoyrdata$Mullen_composite = twoyrdata$gmraw_24_Z + twoyrdata$vrraw_24_Z + twoyrdata$fmraw_24_Z + twoyrdata$rlraw_24_Z + twoyrdata$elraw_24_Z
+twoyrdata$Mullen_lang_composite = twoyrdata$elraw_24_Z + twoyrdata$rlraw_24_Z
+summary(twoyrdata$rlraw_24_Z)
+summary(twoyrdata$Mullen_lang_composite)
+sd(twoyrdata$Mullen_lang_composite)
+summary(fiveyrdata$viq)
+sd(fiveyrdata$viq)
+
+
+#create categories of subscales
+#child focused subscale = abuse + neglect + cold
+twoyrdata$adv_child = twoyrdata$neglect.24 + twoyrdata$cold.24 + twoyrdata$abuse.24
+fiveyrdata$adv_child = fiveyrdata$neglect.60 + fiveyrdata$cold.60 + fiveyrdata$abuse.60
+
+#maternal focused subscale = depr + isol + viol + conflict
+twoyrdata$adv_maternal = twoyrdata$depr.24 + twoyrdata$isol.24 + twoyrdata$viol.24 + twoyrdata$conflict.24
+fiveyrdata$adv_maternal = fiveyrdata$depr.60 + fiveyrdata$isol.60 + fiveyrdata$viol.60 + fiveyrdata$conflict.60
+
+#environment focused subscale = econ + commun
+twoyrdata$adv_env = twoyrdata$econ.24 + twoyrdata$commun.24
+fiveyrdata$adv_env = fiveyrdata$econ.60 + fiveyrdata$commun.60
+
+write_xlsx(twoyrdata, "twoyrdatafromR.xlsx")
+
+write_xlsx(fiveyrdata, "fiveyrdatafromR.xlsx")
+
+
+
+```
+
+```{r}
+
+#subset LI and MI 
+LI_twoyrdata <- subset(twoyrdata, Cohort == "LI")
+MI_twoyrdata <- subset(twoyrdata, Cohort == "MI")
+LI_fiveyrdata <- subset(fiveyrdata, Cohort == "LI")
+MI_fiveyrdata <- subset(fiveyrdata, Cohort == "MI")
+LI_data <- subset(dat, Cohort == "LI")
+MI_data <- subset(dat, Cohort == "MI")
+
+```
+
+
+```{r}
+#create vector with SIDs that are included
+SIDs_included = dat$SID
+#load SES data
+SES_testdata <- read_excel("SES_testdata.xlsx")
+SES_included_subs <- subset(SES_testdata, SID %in% SIDs_included)
+write_xlsx(SES_included_subs,"/Users/eily/Dropbox (BCH)/BEAN NIRS/FINAL_manuscript_Stat_Learning/Datasets_Programs/SES_included_subs.xlsx")
+
+#subset FCI data so only included subs
+FCI_supplement_concurrent <- read_excel("FCI_Supplement_Concurrent.xlsx")
+FCI_concurrent_included <- subset(FCI_supplement_concurrent, SID %in% SIDs_included)
+FCI_concurrent_included_24 <- subset(FCI_concurrent_included, vnum == "24")
+write_xlsx(FCI_concurrent_included_24,"/Users/eily/Dropbox (BCH)/BEAN NIRS/FINAL_manuscript_Stat_Learning/Datasets_Programs/FCI_concurrent_included_24.xlsx")
+FCI_concurrent_included_60 <- subset(FCI_concurrent_included, vnum == "60")
+write_xlsx(FCI_concurrent_included_60,"/Users/eily/Dropbox (BCH)/BEAN NIRS/FINAL_manuscript_Stat_Learning/Datasets_Programs/FCI_concurrent_included_60.xlsx")
+
+#subset CPAS data so only included subs
+SIDs_24_included = twoyrdata$SID
+CPAS_supplement_concurrent_24 <- read_csv("CPAS_24mo_measures_mean.csv")
+CPAS_concurrent_included_24 <- subset(CPAS_supplement_concurrent_24, SID %in% SIDs_24_included)
+write_xlsx(CPAS_concurrent_included_24,"/Users/eily/Dropbox (BCH)/BEAN NIRS/FINAL_manuscript_Stat_Learning/Datasets_Programs/CPAS_concurrent_included_24.xlsx")
+
+#
+SIDs_60_included = fiveyrdata$SID
+CPAS_supplement_concurrent_60 <- read_csv("CPAS_60mo_measures_mean.csv")
+CPAS_concurrent_included_60 <- subset(CPAS_supplement_concurrent_60, SID %in% SIDs_60_included)
+write_xlsx(CPAS_concurrent_included_60,"/Users/eily/Dropbox (BCH)/BEAN NIRS/FINAL_manuscript_Stat_Learning/Datasets_Programs/CPAS_concurrent_included_60.xlsx")
+
+```
+
+```{r}
+#ages for each cohorts and standard deviations
+
+#ages for 5yo
+summary(fiveyrdata$Age_NIRS_5yr_visit)
+sd(fiveyrdata$Age_NIRS_5yr_visit, na.rm=TRUE)
+#mean age 62.35, sd=2.45
+
+#ages for 2yo
+summary(twoyrdata$Age_NIRS_2yr_visit)
+sd(twoyrdata$Age_NIRS_2yr_visit, na.rm=TRUE)
+#mean age 25.72, sd=2.07 months
+
+#ages for 5yo LI
+summary(LI_fiveyrdata$Age_NIRS_5yr_visit)
+sd(LI_fiveyrdata$Age_NIRS_5yr_visit, na.rm=TRUE)
+#mean 63.49, sd=1.88
+
+#ages for 5yo MI
+summary(MI_fiveyrdata$Age_NIRS_5yr_visit)
+sd(MI_fiveyrdata$Age_NIRS_5yr_visit, na.rm=TRUE)
+#mean 59.84, sd=1.53
+
+#ages for 2yo LI
+summary(LI_twoyrdata$Age_NIRS_2yr_visit)
+sd(LI_twoyrdata$Age_NIRS_2yr_visit, na.rm=TRUE)
+#mean 26.57, sd=2.13
+
+#ages for 5yo MI
+summary(MI_twoyrdata$Age_NIRS_2yr_visit)
+sd(MI_twoyrdata$Age_NIRS_2yr_visit, na.rm=TRUE)
+#mean 24.33, sd=0.87
+
+(t.test(Age_NIRS_2yr_visit ~ Cohort, data = dat))
+#significant difference in age between 2yr LI and MI, older in LI group
+
+(t.test(Age_NIRS_5yr_visit ~ Cohort, data = dat))
+#significant difference in age between 5yr LI and MI, older in LI group
+
+
+```
+#NIRS t tests
+```{r}
+#NIRS analyses
+
+#For high-novel: Do t-tests comparing each ROI/hem between 24 and 60 months to see which is higher
+(t.test(High_Novel_RIFG_oxy ~ Age_Cohort, data = dat))
+(t.test(High_Novel_LIFG_oxy ~ Age_Cohort, data = dat))
+(t.test(High_Novel_RSTG_oxy ~ Age_Cohort, data = dat))
+(t.test(High_Novel_LSTG_oxy ~ Age_Cohort, data = dat))
+my_pvalues = c(.8357, .9927, .02993, .1101)
+#correct for multiple comparisons
+
+
+#for high-low, don't do any tests because no significant main effects or interactions?
+
+dat$Low_Novel_STG_oxy_R <- (dat$Low_Novel_RSTG_oxy + dat$Low_Novel_LSTG_oxy)/2
+(t.test(Low_Novel_STG_oxy_R ~ Age_Cohort, data = dat))
+
+
+
+#for low-novel, do same tests as high-novel
+(t.test(Low_Novel_IFG_oxy ~ Age_Cohort, data = dat))
+(t.test(Low_Novel_STG_oxy ~ Age_Cohort, data = dat))
+
+#more tests (same comparisons as high-novel)
+(t.test(Low_Novel_RIFG_oxy ~ Age_Cohort, data = dat))
+(t.test(Low_Novel_LIFG_oxy ~ Age_Cohort, data = dat))
+(t.test(Low_Novel_RSTG_oxy ~ Age_Cohort, data = dat))
+(t.test(Low_Novel_LSTG_oxy ~ Age_Cohort, data = dat))
+
+
+```
+
+
+
+```{r}
+#Income descriptive stats
+summary(dat$inco_1)
+sd(dat$inco_1, na.rm=TRUE)
+
+#2yrLI
+summary(LI_twoyrdata$inco_1)
+sd(LI_twoyrdata$inco_1, na.rm=TRUE)
+
+#2yrMI 
+summary(MI_twoyrdata$inco_1)
+sd(MI_twoyrdata$inco_1, na.rm=TRUE)
+
+#5yrLI
+summary(LI_fiveyrdata$inco_1)
+sd(LI_fiveyrdata$inco_1, na.rm=TRUE)
+
+#5yrMI
+summary(MI_fiveyrdata$inco_1)
+sd(MI_fiveyrdata$inco_1, na.rm=TRUE)
+
+#LI 2 and 5
+summary(LI_data$inco_1)
+sd(LI_data$inco_1, na.rm=TRUE)
+
+#MI 2 and 5
+summary(MI_data$inco_1)
+sd(MI_data$inco_1, na.rm=TRUE)
+
+#T-test of income between 2 and 5yr olds
+(t.test(inco_1 ~ Age_Cohort, data = dat))
+#no sig difference in income between 2 and 5 yrs
+
+#T-test of income between LI and MI
+(t.test(inco_1 ~ Cohort, data = dat))
+#significant difference in income between LI and MI (p<.001)
+#this is a big difference => should be collapsing or no? 
+
+#make histograms of income
+LI_inc_hist <- hist(LI_data$inco_1)
+MI_inc_hist <- hist(MI_data$inco_1)
+
+#make overlapping histogram
+ggplot(dat, aes(x= inco_1)) + geom_histogram(data = LI_data, fill = "red", alpha = 0.5) + geom_histogram(data = MI_data, fill = "green", alpha = 0.5)
+
+#2yr olds only - overlapping histogram
+ggplot(twoyrdata, aes(x= inco_1)) + geom_histogram(data = LI_twoyrdata, fill = "red", alpha = 0.5) + geom_histogram(data = MI_twoyrdata, fill = "green", alpha = 0.5)
+
+#5yr olds only - overlapping histogram
+ggplot(fiveyrdata, aes(x= inco_1)) + geom_histogram(data = LI_fiveyrdata, fill = "red", alpha = 0.5) + geom_histogram(data = MI_fiveyrdata, fill = "green", alpha = 0.5)
+
+```
+#
+
+
+
+```{r}
+#explore maternal education
+summary(dat$maternal_ed_yrs)
+sd(dat$maternal_ed_yrs, na.rm=TRUE)
+#avg mat ed is 7 yrs, sd 4.31
+
+#LI
+summary(LI_data$maternal_ed_yrs)
+sd(LI_data$maternal_ed_yrs, na.rm=TRUE)
+#LI: mat ed mean 5.247, SD 3.76
+
+#MI
+summary(MI_data$maternal_ed_yrs)
+sd(MI_data$maternal_ed_yrs, na.rm=TRUE)
+#LI: mat ed mean 10.21, SD 3.33
+
+(t.test(maternal_ed_yrs ~ Cohort, data = dat))
+#significant differences between LI and MI mat ed in yrs
+
+#make overlapping histogram
+ggplot(dat, aes(x= maternal_ed_yrs)) + geom_histogram(data = LI_data, fill = "red", alpha = 0.5) + geom_histogram(data = MI_data, fill = "green", alpha = 0.5)
+
+#2yr olds only - overlapping histogram
+ggplot(twoyrdata, aes(x= maternal_ed_yrs)) + geom_histogram(data = LI_twoyrdata, fill = "red", alpha = 0.5) + geom_histogram(data = MI_twoyrdata, fill = "green", alpha = 0.5)
+
+#5yr olds only - overlapping histogram
+ggplot(fiveyrdata, aes(x= maternal_ed_yrs)) + geom_histogram(data = LI_fiveyrdata, fill = "red", alpha = 0.5) + geom_histogram(data = MI_fiveyrdata, fill = "green", alpha = 0.5)
+
+#explore paternal education
+summary(dat$paternal_ed_yrs)
+sd(dat$paternal_ed_yrs, na.rm=TRUE)
+#avg mat ed is 7.35 yrs, sd 4.83
+
+#LI
+summary(LI_data$paternal_ed_yrs)
+sd(LI_data$paternal_ed_yrs, na.rm=TRUE)
+#LI: mat ed mean 5.5, SD 4.18
+
+#MI
+summary(MI_data$paternal_ed_yrs)
+sd(MI_data$paternal_ed_yrs, na.rm=TRUE)
+#LI: mat ed mean 11.25, SD 3.53
+
+(t.test(paternal_ed_yrs ~ Cohort, data = dat))
+#significant differences between LI and MI mat ed in yrs
+
+#make overlapping histogram
+ggplot(dat, aes(x= paternal_ed_yrs)) + geom_histogram(data = LI_data, fill = "red", alpha = 0.5) + geom_histogram(data = MI_data, fill = "green", alpha = 0.5)
+
+#2yr olds only - overlapping histogram
+ggplot(twoyrdata, aes(x= paternal_ed_yrs)) + geom_histogram(data = LI_twoyrdata, fill = "red", alpha = 0.5) + geom_histogram(data = MI_twoyrdata, fill = "green", alpha = 0.5)
+
+#5yr olds only - overlapping histogram
+ggplot(fiveyrdata, aes(x= maternal_ed_yrs)) + geom_histogram(data = LI_fiveyrdata, fill = "red", alpha = 0.5) + geom_histogram(data = MI_fiveyrdata, fill = "green", alpha = 0.5)
+
+
+
+```
+
+```{r}
+#Income to needs descriptive stats
+summary(dat$Income_to_needs)
+sd(dat$Income_to_needs, na.rm=TRUE)
+#mean 5777, sd 6124
+
+#2yrLI
+summary(LI_twoyrdata$Income_to_needs)
+sd(LI_twoyrdata$Income_to_needs, na.rm=TRUE)
+#mean 2911, sd 1240
+
+
+#2yrMI 
+summary(MI_twoyrdata$Income_to_needs)
+sd(MI_twoyrdata$Income_to_needs, na.rm=TRUE)
+#mean 9441, sd 3824
+
+#5yrLI
+summary(LI_fiveyrdata$Income_to_needs)
+sd(LI_fiveyrdata$Income_to_needs, na.rm=TRUE)
+#mean 2294, sd 1771
+
+#5yrMI
+summary(MI_fiveyrdata$Income_to_needs)
+sd(MI_fiveyrdata$Income_to_needs, na.rm=TRUE)
+#mean 13643, sd 8430
+
+#LI 2 and 5
+summary(LI_data$Income_to_needs)
+sd(LI_data$Income_to_needs, na.rm=TRUE)
+#mean 2560, sd 1589
+
+#MI 2 and 5
+summary(MI_data$Income_to_needs)
+sd(MI_data$Income_to_needs, na.rm=TRUE)
+#mean 11647, sd 6942
+
+#T-test of income between 2 and 5yr olds
+(t.test(Income_to_needs ~ Age_Cohort, data = dat))
+#no sig difference in income to needs between 2 and 5 yrs
+
+#T-test of income between LI and MI
+(t.test(Income_to_needs ~ Cohort, data = dat))
+#significant difference in income to needs between LI and MI (p<.001)
+
+#make overlapping histogram
+ggplot(dat, aes(x= Income_to_needs)) + geom_histogram(data = LI_data, fill = "red", alpha = 0.5) + geom_histogram(data = MI_data, fill = "green", alpha = 0.5)
+
+ggplot(dat, aes(x= inco_1)) + geom_histogram(data = LI_data, fill = "red", alpha = 0.5) + geom_histogram(data = MI_data, fill = "green", alpha = 0.5)
+
+#2yr olds only - overlapping histogram
+ggplot(twoyrdata, aes(x= Income_to_needs)) + geom_histogram(data = LI_twoyrdata, fill = "red", alpha = 0.5) + geom_histogram(data = MI_twoyrdata, fill = "green", alpha = 0.5)
+
+#5yr olds only - overlapping histogram
+ggplot(fiveyrdata, aes(x= Income_to_needs)) + geom_histogram(data = LI_fiveyrdata, fill = "red", alpha = 0.5) + geom_histogram(data = MI_fiveyrdata, fill = "green", alpha = 0.5)
+
+```
+
+```{r}
+#HAZ descriptive stats
+
+#6mo HAZ for 2yrLI and MI combined
+summary(twoyrdata$haz_6)
+hist(twoyrdata$haz_6)
+
+#12mo HAZ for 2yrLI
+summary(LI_twoyrdata$haz_6)
+hist(LI_twoyrdata$haz_6)
+
+#12mo HAZ for 2yrMI
+summary(MI_twoyrdata$haz_6)
+hist(MI_twoyrdata$haz_6)
+
+(t.test(haz_6 ~ Cohort, data = twoyrdata))
+#significant difference in HAZ between LI and MI groups
+
+#42mo HAZ for 5yrLI and MI combined
+summary(fiveyrdata$haz_36)
+hist(fiveyrdata$haz_36)
+
+#42mo HAZ for 2yrLI
+summary(LI_fiveyrdata$haz_36)
+hist(LI_fiveyrdata$haz_36)
+
+#12mo HAZ for 2yrMI
+summary(MI_fiveyrdata$haz_36)
+hist(MI_fiveyrdata$haz_36)
+
+(t.test(haz_36 ~ Cohort, data = fiveyrdata))
+#significant difference in HAZ between LI and MI groups
+
+#make overlapping histogram
+
+#2yr olds only - overlapping histogram
+ggplot(twoyrdata, aes(x= haz_6)) + geom_histogram(data = LI_twoyrdata, fill = "red", alpha = 0.5) + geom_histogram(data = MI_twoyrdata, fill = "green", alpha = 0.5) + 
+
+#5yr olds only - overlapping histogram
+ggplot(fiveyrdata, aes(x= haz_36)) + geom_histogram(data = LI_fiveyrdata, fill = "red", alpha = 0.5) + geom_histogram(data = MI_fiveyrdata, fill = "green", alpha = 0.5)
+
+ggplot(twoyrdata, aes(x=haz_6, fill = Cohort)) + 
+  geom_histogram(alpha = 0.5) + 
+  scale_fill_manual(name="Cohort",values=c("red","green"),labels=c("Low-Income","Middle-Income"))
+
+ggplot(fiveyrdata, aes(x=haz_36, fill = Cohort)) + 
+  geom_histogram(alpha = 0.5) + 
+  scale_fill_manual(name="Cohort",values=c("red","green"),labels=c("Low-Income","Middle-Income"))
+
+```
+
+```{r}
+#FCI descriptive stats
+fiveyrdata$fcitot_60[fiveyrdata$fcitot_60 == 99] <- NA
+fiveyrdata$fcitot_60[fiveyrdata$fcitot_60 == 98] <- NA
+
+#twoyr data
+summary(dat$fcitot_6)
+sd(dat$fcitot_6, na.rm=TRUE)
+
+#2yrLI
+summary(LI_twoyrdata$fcitot_6)
+sd(LI_twoyrdata$fcitot_6, na.rm=TRUE)
+
+#2yrMI
+summary(MI_twoyrdata$fcitot_6)
+sd(MI_twoyrdata$fcitot_6, na.rm=TRUE)
+
+(t.test(fcitot_6 ~ Cohort, data = twoyrdata))
+
+#fiveyrdata
+summary(dat$fcitot_36)
+sd(dat$fcitot_36, na.rm=TRUE)
+
+#5yrLI
+summary(LI_fiveyrdata$fcitot_36)
+sd(LI_fiveyrdata$fcitot_36, na.rm=TRUE)
+
+#5yrMI
+summary(MI_fiveyrdata$fcitot_36)
+sd(MI_fiveyrdata$fcitot_36, na.rm=TRUE)
+
+(t.test(fcitot_36 ~ Cohort, data = fiveyrdata))
+
+
+#overlapping histograms
+ggplot(twoyrdata, aes(x=fcitot_6, fill = Cohort)) + 
+  geom_histogram(alpha = 0.5) + 
+  scale_fill_manual(name="Cohort",values=c("red","green"),labels=c("Low-Income","Middle-Income"))
+
+ggplot(fiveyrdata, aes(x=fcitot_36, fill = Cohort)) + 
+  geom_histogram(alpha = 0.5) + 
+  scale_fill_manual(name="Cohort",values=c("red","green"),labels=c("Low-Income","Middle-Income"))
+
+#concurrent FCI
+#twoyr data
+summary(dat$fcitot_24)
+sd(dat$fcitot24, na.rm=TRUE)
+
+#2yrLI
+summary(LI_twoyrdata$fcitot_24)
+sd(LI_twoyrdata$fcitot_24, na.rm=TRUE)
+
+#2yrMI
+summary(MI_twoyrdata$fcitot_24)
+sd(MI_twoyrdata$fcitot_24, na.rm=TRUE)
+
+(t.test(fcitot_24 ~ Cohort, data = twoyrdata))
+
+#fiveyrdata
+summary(dat$fcitot_60)
+sd(dat$fcitot_60, na.rm=TRUE)
+
+#5yrLI
+summary(LI_fiveyrdata$fcitot_60)
+sd(LI_fiveyrdata$fcitot_60, na.rm=TRUE)
+
+#5yrMI
+summary(MI_fiveyrdata$fcitot_60)
+sd(MI_fiveyrdata$fcitot_60, na.rm=TRUE)
+
+(t.test(fcitot_60 ~ Cohort, data = fiveyrdata))
+
+#overlapping histograms
+ggplot(twoyrdata, aes(x=fcitot_24, fill = Cohort)) + 
+  geom_histogram(alpha = 0.5) + 
+  scale_fill_manual(name="Cohort",values=c("red","green"),labels=c("Low-Income","Middle-Income"))
+
+ggplot(fiveyrdata, aes(x=fcitot_60, fill = Cohort)) + 
+  geom_histogram(alpha = 0.5) + 
+  scale_fill_manual(name="Cohort",values=c("red","green"),labels=c("Low-Income","Middle-Income"))
+
+```
+
+```{r}
+#CPAS descriptive stats
+#subscale scores are mean of items within subscale (e.g. take average of score on all items within subscale)
+#adv total scores are sum of the mean subscale scores
+
+#all cohorts combined concurrent
+summary(dat$advtot_conc)
+sd(dat$advtot_conc, na.rm=TRUE)
+hist(dat$advtot_conc)
+
+(t.test(advtot_conc ~ Age_Cohort, data = dat))
+(t.test(advtot_conc ~ Cohort, data = twoyrdata))
+(t.test(advtot_conc ~ Cohort, data = fiveyrdata))
+
+#overlapping histograms
+ggplot(twoyrdata, aes(x=advtot_conc, fill = Cohort)) + 
+  geom_histogram(alpha = 0.5) + 
+  scale_fill_manual(name="Cohort",values=c("red","green"),labels=c("Low-Income","Middle-Income"))
+
+ggplot(fiveyrdata, aes(x=advtot_conc, fill = Cohort)) + 
+  geom_histogram(alpha = 0.5) + 
+  scale_fill_manual(name="Cohort",values=c("red","green"),labels=c("Low-Income","Middle-Income"))
+
+#2yr subscales
+ggplot(twoyrdata, aes(x=neglect.24, fill = Cohort)) + 
+  geom_histogram(alpha = 0.5) + 
+  scale_fill_manual(name="Cohort",values=c("red","green"),labels=c("Low-Income","Middle-Income"))
+
+ggplot(twoyrdata, aes(x=cold.24, fill = Cohort)) + 
+  geom_histogram(alpha = 0.5) + 
+  scale_fill_manual(name="Cohort",values=c("red","green"),labels=c("Low-Income","Middle-Income"))
+
+ggplot(twoyrdata, aes(x=abuse.24, fill = Cohort)) + 
+  geom_histogram(alpha = 0.5) + 
+  scale_fill_manual(name="Cohort",values=c("red","green"),labels=c("Low-Income","Middle-Income"))
+
+ggplot(twoyrdata, aes(x=isol.24, fill = Cohort)) + 
+  geom_histogram(alpha = 0.5) + 
+  scale_fill_manual(name="Cohort",values=c("red","green"),labels=c("Low-Income","Middle-Income"))
+
+ggplot(twoyrdata, aes(x=viol.24, fill = Cohort)) + 
+  geom_histogram(alpha = 0.5) + 
+  scale_fill_manual(name="Cohort",values=c("red","green"),labels=c("Low-Income","Middle-Income"))
+
+ggplot(twoyrdata, aes(x=conflict.24, fill = Cohort)) + 
+  geom_histogram(alpha = 0.5) + 
+  scale_fill_manual(name="Cohort",values=c("red","green"),labels=c("Low-Income","Middle-Income"))
+
+ggplot(twoyrdata, aes(x=depr.24, fill = Cohort)) + 
+  geom_histogram(alpha = 0.5) + 
+  scale_fill_manual(name="Cohort",values=c("red","green"),labels=c("Low-Income","Middle-Income"))
+
+ggplot(twoyrdata, aes(x=econ.24, fill = Cohort)) + 
+  geom_histogram(alpha = 0.5) + 
+  scale_fill_manual(name="Cohort",values=c("red","green"),labels=c("Low-Income","Middle-Income"))
+
+ggplot(twoyrdata, aes(x=commun.24, fill = Cohort)) + 
+  geom_histogram(alpha = 0.5) + 
+  scale_fill_manual(name="Cohort",values=c("red","green"),labels=c("Low-Income","Middle-Income"))
+
+#5yr subscales
+ggplot(fiveyrdata, aes(x=neglect.60, fill = Cohort)) + 
+  geom_histogram(alpha = 0.5) + 
+  scale_fill_manual(name="Cohort",values=c("red","green"),labels=c("Low-Income","Middle-Income"))
+
+ggplot(fiveyrdata, aes(x=cold.60, fill = Cohort)) + 
+  geom_histogram(alpha = 0.5) + 
+  scale_fill_manual(name="Cohort",values=c("red","green"),labels=c("Low-Income","Middle-Income"))
+
+ggplot(fiveyrdata, aes(x=abuse.60, fill = Cohort)) + 
+  geom_histogram(alpha = 0.5) + 
+  scale_fill_manual(name="Cohort",values=c("red","green"),labels=c("Low-Income","Middle-Income"))
+
+ggplot(fiveyrdata, aes(x=isol.60, fill = Cohort)) + 
+  geom_histogram(alpha = 0.5) + 
+  scale_fill_manual(name="Cohort",values=c("red","green"),labels=c("Low-Income","Middle-Income"))
+
+ggplot(fiveyrdata, aes(x=viol.60, fill = Cohort)) + 
+  geom_histogram(alpha = 0.5) + 
+  scale_fill_manual(name="Cohort",values=c("red","green"),labels=c("Low-Income","Middle-Income"))
+
+ggplot(fiveyrdata, aes(x=conflict.60, fill = Cohort)) + 
+  geom_histogram(alpha = 0.5) + 
+  scale_fill_manual(name="Cohort",values=c("red","green"),labels=c("Low-Income","Middle-Income"))
+
+ggplot(fiveyrdata, aes(x=depr.60, fill = Cohort)) + 
+  geom_histogram(alpha = 0.5) + 
+  scale_fill_manual(name="Cohort",values=c("red","green"),labels=c("Low-Income","Middle-Income"))
+
+ggplot(fiveyrdata, aes(x=econ.60, fill = Cohort)) + 
+  geom_histogram(alpha = 0.5) + 
+  scale_fill_manual(name="Cohort",values=c("red","green"),labels=c("Low-Income","Middle-Income"))
+
+ggplot(fiveyrdata, aes(x=commun.60, fill = Cohort)) + 
+  geom_histogram(alpha = 0.5) + 
+  scale_fill_manual(name="Cohort",values=c("red","green"),labels=c("Low-Income","Middle-Income"))
+
+
+#CPAS categories descriptive stats
+summary(twoyrdata$adv_child)
+summary(fiveyrdata$adv_child)
+summary(twoyrdata$adv_maternal)
+summary(fiveyrdata$adv_maternal)
+summary(twoyrdata$adv_env)
+summary(fiveyrdata$adv_env)
+
+ggplot(twoyrdata, aes(x=adv_child, fill = Cohort)) + 
+  geom_histogram(alpha = 0.5) + 
+  scale_fill_manual(name="Cohort",values=c("red","green"),labels=c("Low-Income","Middle-Income"))
+ggplot(twoyrdata, aes(x=adv_maternal, fill = Cohort)) + 
+  geom_histogram(alpha = 0.5) + 
+  scale_fill_manual(name="Cohort",values=c("red","green"),labels=c("Low-Income","Middle-Income"))
+ggplot(twoyrdata, aes(x=adv_env, fill = Cohort)) + 
+  geom_histogram(alpha = 0.5) + 
+  scale_fill_manual(name="Cohort",values=c("red","green"),labels=c("Low-Income","Middle-Income"))
+
+ggplot(fiveyrdata, aes(x=adv_child, fill = Cohort)) + 
+  geom_histogram(alpha = 0.5) + 
+  scale_fill_manual(name="Cohort",values=c("red","green"),labels=c("Low-Income","Middle-Income"))
+ggplot(fiveyrdata, aes(x=adv_maternal, fill = Cohort)) + 
+  geom_histogram(alpha = 0.5) + 
+  scale_fill_manual(name="Cohort",values=c("red","green"),labels=c("Low-Income","Middle-Income"))
+ggplot(fiveyrdata, aes(x=adv_env, fill = Cohort)) + 
+  geom_histogram(alpha = 0.5) + 
+  scale_fill_manual(name="Cohort",values=c("red","green"),labels=c("Low-Income","Middle-Income"))
+
+```
+
+
+```{r}
+#CPAS correlations
+
+CPAS_variables_24 <- twoyrdata %>% select(neglect.24, cold.24, isol.24, abuse.24, conflict.24, viol.24, depr.24, econ.24, commun.24, advtot_conc)
+
+CPAS_variables_60 <- fiveyrdata %>% select(neglect.60, cold.60, isol.60, abuse.60, conflict.60, viol.60, depr.60, econ.60, commun.60, advtot_conc)
+
+rcorr(as.matrix(CPAS_variables_24), type = c("pearson"))
+rcorr(as.matrix(CPAS_variables_60), type = c("pearson"))
+plot(CPAS_variables_24)
+corr <- cor(na.omit(CPAS_variables_24))
+corrplot(corr)
+corrplot(corr, method= 'number')
+
+corr <- cor(na.omit(CPAS_variables_60))
+corrplot(corr)
+corrplot(corr, method= 'number')
+
+
+
+```
+
+```{r}
+#HOME descriptive stats? 
+#have the HOME for 24mo LI at 6mo but not MI? need to check
+
+#two year LI data
+summary(LI_twoyrdata$Home_24)
+sd(LI_twoyrdata$Home_24, na.rm=TRUE)
+hist(LI_twoyrdata$Home_24)
+
+#five yr data
+summary(fiveyrdata$Home_60)
+sd(fiveyrdata$Home_60, na.rm=TRUE)
+
+#five year LI data
+summary(LI_fiveyrdata$Home_60)
+sd(LI_fiveyrdata$Home_60, na.rm=TRUE)
+
+#five year MI data
+summary(MI_fiveyrdata$Home_60)
+sd(MI_fiveyrdata$Home_60, na.rm=TRUE)
+
+#test for LI vs. HI differences among 5yrs
+(t.test(Home_60 ~ Cohort, data = fiveyrdata))
+
+
+#5yr overlapping hist
+ggplot(fiveyrdata, aes(x=Home_60, fill = Cohort)) + 
+  geom_histogram(alpha = 0.5) + 
+  scale_fill_manual(name="Cohort",values=c("red","green"),labels=c("Low-Income","Middle-Income"))
+
+```
+
+```{r}
+#WPPSI descriptive stats
+summary(fiveyrdata$fsiq)
+sd(fiveyrdata$fsiq, na.rm=TRUE)
+
+summary(fiveyrdata$viq)
+sd(fiveyrdata$viq, na.rm=TRUE)
+
+summary(fiveyrdata$piq)
+sd(fiveyrdata$piq, na.rm=TRUE)
+
+#overlapping histograms
+ggplot(fiveyrdata, aes(x=fsiq, fill = Cohort)) + 
+  geom_histogram(alpha = 0.5) + 
+  scale_fill_manual(name="Cohort",values=c("red","green"),labels=c("Low-Income","Middle-Income"))
+
+ggplot(fiveyrdata, aes(x=viq, fill = Cohort)) + 
+  geom_histogram(alpha = 0.5) + 
+  scale_fill_manual(name="Cohort",values=c("red","green"),labels=c("Low-Income","Middle-Income"))
+
+ggplot(fiveyrdata, aes(x=piq, fill = Cohort)) + 
+  geom_histogram(alpha = 0.5) + 
+  scale_fill_manual(name="Cohort",values=c("red","green"),labels=c("Low-Income","Middle-Income"))
+
+#t-tests 
+(t.test(fsiq ~ Cohort, data = fiveyrdata))
+(t.test(viq ~ Cohort, data = fiveyrdata))
+(t.test(piq ~ Cohort, data = fiveyrdata))
+
+```
+
+```{r}
+#create vector with SIDs that are included
+SIDs_included = dat$SID
+#load SES data
+MI_2yr_Mullen <- read_excel("2yrMI_Mullen_allsubs.xlsx")
+MI_2yr_Mullen_included_subs <- subset(MI_2yr_Mullen, SID %in% SIDs_included)
+MI_2yr_Mullen_included_subs <- subset(MI_2yr_Mullen_included_subs, vnum == "24")
+write_xlsx(MI_2yr_Mullen_included_subs,"/Users/eily/Dropbox (BCH)/BEAN NIRS/FINAL_manuscript_Stat_Learning/Datasets_Programs/MI_2yr_Mullen_included_subs.xlsx")
+```
+
+
+```{r}
+#Mullen descriptive stats for subscales
+twoyrdata$gmraw_24[twoyrdata$gmraw_24 == 99] <- NA
+summary(twoyrdata$gmraw_24)
+sd(twoyrdata$gmraw_24, na.rm=TRUE)
+summary(twoyrdata$vrraw_24)
+sd(twoyrdata$vrraw_24, na.rm=TRUE)
+summary(twoyrdata$fmraw_24)
+sd(twoyrdata$fmraw_24, na.rm=TRUE)
+summary(twoyrdata$rlraw_24)
+sd(twoyrdata$rlraw_24, na.rm=TRUE)
+summary(twoyrdata$elraw_24)
+sd(twoyrdata$elraw_24, na.rm=TRUE)
+
+#test for differences between LI and MI for 2yo Mullen subscales
+t.test(gmraw_24 ~ Cohort, data = twoyrdata)
+(t.test(vrraw_24 ~ Cohort, data = twoyrdata))
+(t.test(fmraw_24 ~ Cohort, data = twoyrdata))
+(t.test(rlraw_24 ~ Cohort, data = twoyrdata))
+(t.test(elraw_24 ~ Cohort, data = twoyrdata))
+
+#overlapping histograms
+ggplot(twoyrdata, aes(x=gmraw_24, fill = Cohort)) + 
+  geom_histogram(alpha = 0.5) + 
+  scale_fill_manual(name="Cohort",values=c("red","green"),labels=c("Low-Income","Middle-Income"))
+
+ggplot(twoyrdata, aes(x=vrraw_24, fill = Cohort)) + 
+  geom_histogram(alpha = 0.5) + 
+  scale_fill_manual(name="Cohort",values=c("red","green"),labels=c("Low-Income","Middle-Income"))
+
+ggplot(twoyrdata, aes(x=fmraw_24, fill = Cohort)) + 
+  geom_histogram(alpha = 0.5) + 
+  scale_fill_manual(name="Cohort",values=c("red","green"),labels=c("Low-Income","Middle-Income"))
+
+ggplot(twoyrdata, aes(x=rlraw_24, fill = Cohort)) + 
+  geom_histogram(alpha = 0.5) + 
+  scale_fill_manual(name="Cohort",values=c("red","green"),labels=c("Low-Income","Middle-Income"))
+
+ggplot(twoyrdata, aes(x=elraw_24, fill = Cohort)) + 
+  geom_histogram(alpha = 0.5) + 
+  scale_fill_manual(name="Cohort",values=c("red","green"),labels=c("Low-Income","Middle-Income"))
+
+
+#composite score 
+summary(twoyrdata$Mullen_composite)
+sd(twoyrdata$Mullen_composite, na.rm=TRUE)
+hist(twoyrdata$Mullen_composite)
+
+(t.test(Mullen_composite ~ Cohort, data = twoyrdata))
+
+ggplot(twoyrdata, aes(x=Mullen_composite, fill = Cohort)) + 
+  geom_histogram(alpha = 0.5) + 
+  scale_fill_manual(name="Cohort",values=c("red","green"),labels=c("Low-Income","Middle-Income"))
+```
+
+
+
+```{r}
+#correlations among adversity variables 
+adversity_variables_2yr <- twoyrdata %>% select(inco_1, Income_to_needs, maternal_ed_yrs, paternal_ed_yrs, haz_6, fcitot_24, advtot_conc, adv_child, adv_maternal, adv_env)
+
+
+adversity_variables_5yr <- fiveyrdata %>% select(inco_1, Income_to_needs, maternal_ed_yrs, paternal_ed_yrs, haz_36, fcitot_60, advtot_conc, adv_child, adv_maternal, adv_env)
+
+#2yr LI and MI separately
+adversity_variables_2yr_LI <- LI_twoyrdata %>% select(inco_1, Income_to_needs, maternal_ed_yrs, paternal_ed_yrs, haz_6, fcitot_24, advtot_conc, adv_child, adv_maternal, adv_env)
+
+
+adversity_variables_5yr_LI <- LI_fiveyrdata %>% select(inco_1, Income_to_needs, maternal_ed_yrs, paternal_ed_yrs, haz_36, fcitot_60, advtot_conc, adv_child, adv_maternal, adv_env)
+
+adversity_variables_2yr_MI <- MI_twoyrdata %>% select(inco_1, Income_to_needs, maternal_ed_yrs, paternal_ed_yrs, haz_6, fcitot_24, advtot_conc, adv_child, adv_maternal, adv_env)
+
+adversity_variables_5yr_MI <- MI_fiveyrdata %>% select(inco_1, Income_to_needs, maternal_ed_yrs, paternal_ed_yrs, haz_36, fcitot_60, advtot_conc, adv_child, adv_maternal, adv_env)
+
+
+rcorr(as.matrix(adversity_variables_2yr), type = c("pearson"))
+rcorr(as.matrix(adversity_variables_5yr), type = c("pearson"))
+rcorr(as.matrix(adversity_variables_2yr_LI), type = c("pearson"))
+rcorr(as.matrix(adversity_variables_5yr_LI), type = c("pearson"))
+rcorr(as.matrix(adversity_variables_2yr_MI), type = c("pearson"))
+rcorr(as.matrix(adversity_variables_5yr_MI), type = c("pearson"))
+
+
+all_adversity_variables_2yr <- twoyrdata %>% select(inco_1, Income_to_needs, maternal_ed_yrs, haz_6, fcitot_24, advtot_conc, adv_child, adv_maternal, adv_env, neglect.24, cold.24, isol.24, abuse.24, conflict.24, viol.24, depr.24, econ.24, commun.24)
+
+all_adversity_variables_5yr <- fiveyrdata %>% select(inco_1, Income_to_needs, maternal_ed_yrs, haz_36, fcitot_60, advtot_conc, adv_child, adv_maternal, adv_env, neglect.60, cold.60, isol.60, abuse.60, conflict.60, viol.60, depr.60, econ.60, commun.60)
+
+adversitycorrs_2yr <- rcorr(as.matrix(all_adversity_variables_2yr), type = c("pearson"))
+adversitycorrs_5yr <- rcorr(as.matrix(all_adversity_variables_5yr), type = c("pearson"))
+
+#
+
+rcorr(as.matrix(all_adversity_variables_2yr), type = c("pearson"))
+corr <- cor(na.omit(all_adversity_variables_2yr))
+corrplot(corr)
+corrplot(corr, method= 'ellipse')
+
+rcorr(as.matrix(all_adversity_variables_5yr), type = c("pearson"))
+corr <- cor(na.omit(all_adversity_variables_5yr))
+corrplot(corr)
+corrplot(corr, method= 'ellipse')
+corrplot(corr, method= 'number')
+```
+
+
+
+
+
+```{r}
+#associations between adversity and WPPSI/Mullen outcomes
+#correlations among adversity variables 
+adversity_outcomes_2yr <- twoyrdata %>% select(Mullen_composite, gmraw_24, fmraw_24, vrraw_24, elraw_24, rlraw_24, Income_to_needs, maternal_ed_yrs, paternal_ed_yrs, haz_6, fcitot_24, advtot_conc, adv_child, adv_maternal, adv_env)
+
+adversity_outcomes_5yr <- fiveyrdata %>% select(fsiq, viq, piq, Income_to_needs, maternal_ed_yrs, paternal_ed_yrs, haz_36, fcitot_60, advtot_conc, adv_child, adv_maternal, adv_env)
+
+#2yr LI and MI separately
+adversity_outcomes_2yr_LI <- LI_twoyrdata %>% select(Mullen_composite, gmraw_24, fmraw_24, vrraw_24, elraw_24, rlraw_24, Income_to_needs, maternal_ed_yrs, paternal_ed_yrs, haz_6, fcitot_24, advtot_conc, adv_child, adv_maternal, adv_env)
+
+adversity_outcomes_5yr_LI <- LI_fiveyrdata %>% select(fsiq, viq, piq, Income_to_needs, maternal_ed_yrs, paternal_ed_yrs, haz_36, fcitot_60, advtot_conc, adv_child, adv_maternal, adv_env)
+
+adversity_outcomes_2yr_MI <- MI_twoyrdata %>% select(Mullen_composite, gmraw_24, fmraw_24, vrraw_24, elraw_24, rlraw_24, Income_to_needs, maternal_ed_yrs, paternal_ed_yrs, haz_6, fcitot_24, advtot_conc, adv_child, adv_maternal, adv_env)
+
+adversity_outcomes_5yr_MI <- MI_fiveyrdata %>% select(fsiq, viq, piq, Income_to_needs, maternal_ed_yrs, paternal_ed_yrs, haz_36, fcitot_60, advtot_conc, adv_child, adv_maternal, adv_env)
+
+
+rcorr(as.matrix(adversity_outcomes_2yr), type = c("pearson"))
+rcorr(as.matrix(adversity_outcomes_5yr), type = c("pearson"))
+rcorr(as.matrix(adversity_outcomes_2yr_LI), type = c("pearson"))
+rcorr(as.matrix(adversity_outcomes_5yr_LI), type = c("pearson"))
+rcorr(as.matrix(adversity_outcomes_2yr_MI), type = c("pearson"))
+rcorr(as.matrix(adversity_outcomes_5yr_MI), type = c("pearson"))
+
+```
+
+```{r}
+#correlations CPAS and Mullen
+CPAS_Mullen_24 <- twoyrdata %>% select(Mullen_composite, gmraw_24, fmraw_24, vrraw_24, elraw_24, rlraw_24, neglect.24, cold.24, isol.24, abuse.24, conflict.24, viol.24, depr.24, econ.24, commun.24, advtot_conc)
+
+CPAS_WPPSI_60 <- fiveyrdata %>% select(fsiq, viq, piq, neglect.60, cold.60, isol.60, abuse.60, conflict.60, viol.60, depr.60, econ.60, commun.60, advtot_conc)
+
+rcorr(as.matrix(CPAS_Mullen_24), type = c("pearson"))
+rcorr(as.matrix(CPAS_WPPSI_60), type = c("pearson"))
+
+```
+
+
+```{r}
+#see if NIRS results differ by LI vs. MI
+
+#high_novel contrasts
+(t.test(High_Novel_RIFG_oxy ~ Cohort, data = twoyrdata))
+(t.test(High_Novel_LIFG_oxy ~ Cohort, data = twoyrdata))
+(t.test(High_Novel_RSTG_oxy ~ Cohort, data = twoyrdata))
+(t.test(High_Novel_LSTG_oxy ~ Cohort, data = twoyrdata))
+
+(t.test(High_Novel_RIFG_oxy ~ Cohort, data = fiveyrdata))
+(t.test(High_Novel_LIFG_oxy ~ Cohort, data = fiveyrdata))
+(t.test(High_Novel_RSTG_oxy ~ Cohort, data = fiveyrdata))
+(t.test(High_Novel_LSTG_oxy ~ Cohort, data = fiveyrdata))
+
+(t.test(High_Novel_RIFG_oxy ~ Cohort, data = dat))
+(t.test(High_Novel_LIFG_oxy ~ Cohort, data = dat))
+(t.test(High_Novel_RSTG_oxy ~ Cohort, data = dat))
+(t.test(High_Novel_LSTG_oxy ~ Cohort, data = dat))
+
+
+```
+
+```{r}
+#associations between NIRS variables of interest and Mullen/WPPSI
+
+Mullen_NIRS_24 <- twoyrdata %>% select(Mullen_composite, gmraw_24, fmraw_24, vrraw_24, elraw_24, rlraw_24, High_Novel_RIFG_oxy, High_Novel_LIFG_oxy, High_Novel_RSTG_oxy, High_Novel_LSTG_oxy)
+
+WPPSI_NIRS_60 <- fiveyrdata %>% select(fsiq, viq, piq, High_Novel_RIFG_oxy, High_Novel_LIFG_oxy, High_Novel_RSTG_oxy, High_Novel_LSTG_oxy)
+
+rcorr(as.matrix(Mullen_NIRS_24), type = c("pearson"))
+rcorr(as.matrix(WPPSI_NIRS_60), type = c("pearson"))
+
+
+```
+
+
+
+```{r}
+#associations between adversity and NIRS outcomes of interest
+
+#correlations CPAS and NIRS
+CPAS_NIRS_24 <- twoyrdata %>% select(High_Novel_RIFG_oxy, High_Novel_LIFG_oxy, High_Novel_RSTG_oxy, High_Novel_LSTG_oxy, neglect.24, cold.24, isol.24, abuse.24, conflict.24, viol.24, depr.24, econ.24, commun.24, advtot_conc, adv_child, adv_maternal, adv_env)
+
+CPAS_NIRS_60 <- fiveyrdata %>% select(High_Novel_RIFG_oxy, High_Novel_LIFG_oxy, High_Novel_RSTG_oxy, High_Novel_LSTG_oxy, neglect.60, cold.60, isol.60, abuse.60, conflict.60, viol.60, depr.60, econ.60, commun.60, advtot_conc, adv_child, adv_maternal, adv_env)
+
+rcorr(as.matrix(CPAS_NIRS_24), type = c("pearson"))
+rcorr(as.matrix(CPAS_NIRS_60), type = c("pearson"))
+
+
+#correlations other adversity and NIRS
+adversity_NIRS_24 <- twoyrdata %>% select(High_Novel_RIFG_oxy, High_Novel_LIFG_oxy, High_Novel_RSTG_oxy, High_Novel_LSTG_oxy, Income_to_needs, maternal_ed_yrs, paternal_ed_yrs, haz_6, fcitot_24, advtot_conc, adv_child, adv_maternal, adv_env)
+
+adversity_NIRS_60 <- fiveyrdata %>% select(High_Novel_RIFG_oxy, High_Novel_LIFG_oxy, High_Novel_RSTG_oxy, High_Novel_LSTG_oxy, Income_to_needs, maternal_ed_yrs, paternal_ed_yrs, haz_36, fcitot_60, advtot_conc, adv_child, adv_maternal, adv_env)
+
+rcorr(as.matrix(adversity_NIRS_24), type = c("pearson"))
+rcorr(as.matrix(adversity_NIRS_60), type = c("pearson"))
+
+```
+
+```{r}
+#Final correlation matrix
+#variables of interest
+
+#Income to needs, maternal ed, HAZ, CPAS, High-novel RSTG, High-novel Left STG, Mullen or WPPSI
+
+#2yrs
+Final_corr_24mo <- twoyrdata %>% select (Income_to_needs, maternal_ed_yrs,haz_6,advtot_conc, adv_child, adv_maternal, adv_env, High_Novel_LSTG_oxy, High_Novel_RSTG_oxy, Mullen_composite, gmraw_24, fmraw_24, vrraw_24, elraw_24, rlraw_24)
+rcorr(as.matrix(Final_corr_24mo), type = c("pearson"))
+corr <- cor(na.omit(Final_corr_24mo))
+corrplot(corr)
+corrplot(corr, method= 'number')
+
+#5yrs
+Final_corr_60mo <- fiveyrdata %>% select (Income_to_needs, maternal_ed_yrs,haz_36,advtot_conc, adv_child, adv_maternal, adv_env, High_Novel_LSTG_oxy, High_Novel_RSTG_oxy, fsiq, piq, viq)
+rcorr(as.matrix(Final_corr_60mo), type = c("pearson"))
+corr <- cor(na.omit(Final_corr_60mo))
+corrplot(corr)
+corrplot(corr, method= 'number')
+
+
+```
+
+#Final regressions 
+
+##Adversity => Outcomes
+```{r}
+#CPAS full score, HAZ, income to needs, maternal ed
+
+#2yr
+Adv_Outcomes_2yr <- lm(Mullen_lang_composite ~ advtot_conc + haz_6 + maternal_ed_yrs + Income_to_needs, data = twoyrdata)
+summary(Adv_Outcomes_2yr) #Review the results
+
+Adv_CPAScat_Outcomes_2yr <- lm(Mullen_lang_composite ~ adv_child + adv_maternal +adv_env + haz_6 + maternal_ed_yrs + Income_to_needs, data = twoyrdata)
+summary(Adv_CPAScat_Outcomes_2yr) #Review the results
+
+#5yr
+Adv_Outcomes_5yr <- lm(viq ~ advtot_conc + haz_36 + maternal_ed_yrs + Income_to_needs, data = fiveyrdata)
+summary(Adv_Outcomes_5yr) #Review the results
+
+Adv_CPAScat_Outcomes_5yr <- lm(viq ~ adv_child + adv_maternal +adv_env + haz_36 + maternal_ed_yrs + Income_to_needs, data = fiveyrdata)
+summary(Adv_CPAScat_Outcomes_5yr) #Review the results
+
+```
+
+
+##Adversity => NIRS
+```{r}
+#2yr
+Adv_NIRS_Left_2yr <- lm(High_Novel_LSTG_oxy ~ advtot_conc + haz_6 + maternal_ed_yrs + Income_to_needs, data = twoyrdata)
+summary(Adv_NIRS_Left_2yr) #Review the results
+
+Adv_NIRS_Right_2yr <- lm(High_Novel_RSTG_oxy ~ advtot_conc + haz_6 + maternal_ed_yrs + Income_to_needs, data = twoyrdata)
+summary(Adv_NIRS_Right_2yr) #Review the results
+
+#with CPAS categories
+Adv_CPAScat_NIRS_Left_2yr <- lm(High_Novel_LSTG_oxy ~ adv_child + adv_maternal + adv_env + haz_6 + maternal_ed_yrs + Income_to_needs, data = twoyrdata)
+summary(Adv_CPAScat_NIRS_Left_2yr) #Review the results
+
+Adv_CPAScat_NIRS_Right_2yr <- lm(High_Novel_RSTG_oxy ~ adv_child + adv_maternal + adv_env + haz_6 + maternal_ed_yrs + Income_to_needs, data = twoyrdata)
+summary(Adv_CPAScat_NIRS_Right_2yr) #Review the results
+
+
+#5yr
+Adv_NIRS_Left_5yr <- lm(High_Novel_LSTG_oxy ~ advtot_conc + haz_36 + maternal_ed_yrs + Income_to_needs, data = fiveyrdata)
+summary(Adv_NIRS_Left_5yr) #Review the results
+
+Adv_NIRS_Right_5yr <- lm(High_Novel_RSTG_oxy ~ advtot_conc + haz_36 + maternal_ed_yrs + Income_to_needs, data = fiveyrdata)
+summary(Adv_NIRS_Right_5yr) #Review the results
+
+#with CPAS categories
+Adv_CPAScat_NIRS_Left_5yr <- lm(High_Novel_LSTG_oxy ~ adv_child + adv_maternal + adv_env + haz_36 + maternal_ed_yrs + Income_to_needs, data = fiveyrdata)
+summary(Adv_CPAScat_NIRS_Left_5yr) #Review the results
+
+Adv_CPAScat_NIRS_Right_5yr <- lm(High_Novel_RSTG_oxy ~ adv_child + adv_maternal + adv_env + haz_36 + maternal_ed_yrs + Income_to_needs, data = fiveyrdata)
+summary(Adv_CPAScat_NIRS_Right_5yr) #Review the results
+
+
+```
+
+##NIRS => Outcomes
+```{r}
+#2yr
+NIRS_Outcomes_2yr <- lm(Mullen_lang_composite ~ High_Novel_LSTG_oxy + High_Novel_RSTG_oxy, data = twoyrdata)
+summary(NIRS_Outcomes_2yr) #Review the results
+
+#5yr
+NIRS_Outcomes_5yr <- lm(viq ~ High_Novel_LSTG_oxy + High_Novel_RSTG_oxy, data = fiveyrdata)
+summary(NIRS_Outcomes_5yr) #Review the results
+
+
+```
+
+#additional regressions if only using significant correlations
+```{r}
+#5yr Adv => NIRS
+select_Adv_CPAScat_NIRS_Right_5yr <- lm(High_Novel_RSTG_oxy ~ haz_36 + maternal_ed_yrs + Income_to_needs + adv_child, data = fiveyrdata)
+summary(select_Adv_CPAScat_NIRS_Right_5yr) #Review the results
+
+select_Adv_CPAScat_NIRS_Left_5yr <- lm(High_Novel_LSTG_oxy ~ haz_36 + maternal_ed_yrs + Income_to_needs + adv_child, data = fiveyrdata)
+summary(select_Adv_CPAScat_NIRS_Left_5yr) #Review the results
+
+
+
+```
+
+
+
+#scatterplots
+```{r}
+ggplot(fiveyrdata, aes(x=adv_maternal, y=viq, color=Cohort, shape=Cohort)) +
+  geom_point(size=2) + geom_smooth(method=lm, se=FALSE, fullrange=TRUE)
+
+ggplot(fiveyrdata, aes(x=maternal_ed_yrs, y=adv_maternal, color=Cohort, shape=Cohort)) +
+  geom_point(size=2) + geom_smooth(method=lm, se=FALSE, fullrange=TRUE)
+
+ggplot(fiveyrdata, aes(x=maternal_ed_yrs, y=viq, color=Cohort, shape=Cohort)) +
+  geom_point(size=2) + geom_smooth(method=lm, se=FALSE, fullrange=TRUE)
+
+ggplot(fiveyrdata, aes(x=haz_36, y=viq, color=Cohort, shape=Cohort)) +
+  geom_point(size=2) + geom_smooth(method=lm, se=FALSE, fullrange=TRUE)
+
+ggplot(twoyrdata, aes(x=adv_maternal, y=Mullen_lang_composite, color=Cohort, shape=Cohort)) +
+  geom_point(size=2) + geom_smooth(method=lm, se=FALSE, fullrange=TRUE)
+
+```
+
+```{r}
+#moderation analyses
+
+Adv_Outcomes_5yr_formod <- lm(viq ~ adv_maternal, data = fiveyrdata)
+summary(Adv_Outcomes_5yr_formod) #Review the results
+
+Adv_Outcomes_5yr_formod_mated <- lm(viq ~ adv_maternal*maternal_ed_yrs, data = fiveyrdata)
+summary(Adv_Outcomes_5yr_formod_mated) #Review the results
+
+
+```
+
+
+```{r}
+#descriptives stats table
+
+dat_summary_stats_2yr <- twoyrdata %>% select (Age_NIRS_2yr_visit, inco_1, Income_to_needs, maternal_ed_yrs,haz_6,advtot_conc, adv_child, adv_maternal, adv_env, Mullen_lang_composite)
+
+dat_summary_stats_5yr <- fiveyrdata %>% select (Age_NIRS_5yr_visit, inco_1, Income_to_needs, maternal_ed_yrs,haz_42,advtot_conc, adv_child, adv_maternal, adv_env, viq)
+
+describe(dat_summary_stats_2yr)
+describe(dat_summary_stats_5yr)
+
+#t.stats between cohorts
+(t.test(Age_NIRS ~ Age_Cohort, data = dat))
+(t.test(inco_1 ~ Age_Cohort, data = dat))
+(t.test(Income_to_needs ~ Age_Cohort, data = dat))
+(t.test(maternal_ed_yrs ~ Age_Cohort, data = dat))
+(t.test(haz_analysis ~ Age_Cohort, data = dat))
+(t.test(advtot_conc ~ Age_Cohort, data = dat))
+(t.test(adv_child_conc ~ Age_Cohort, data = dat))
+(t.test(adv_maternal_conc ~ Age_Cohort, data = dat))
+(t.test(adv_env_conc ~ Age_Cohort, data = dat))
+
+#find # of partiicpants stunted
+dat$stunted <- (dat$haz_analysis < -2)
+summary(dat$stunted)
+twoyrdata$stunted <- (twoyrdata$haz_analysis < -2)
+summary(twoyrdata$stunted)
+
+fiveyrdata$stunted <- (fiveyrdata$haz_analysis < -2)
+summary(fiveyrdata$stunted)
+
+#find # of participants living in extreme poverty
+dat$extremepoverty <- (dat$Income_to_needs < 5410.73)
+summary(dat$extremepoverty)
+twoyrdata$extremepoverty <- (twoyrdata$Income_to_needs < 5410.73)
+summary(twoyrdata$extremepoverty)
+fiveyrdata$extremepoverty <- (fiveyrdata$Income_to_needs < 5410.73)
+summary(fiveyrdata$extremepoverty)
+
+LI_data$extremepoverty <- (LI_data$Income_to_needs < 5410.73)
+summary(LI_data$extremepoverty)
+
+MI_data$extremepoverty <- (MI_data$Income_to_needs < 5410.73)
+summary(MI_data$extremepoverty)
+
+
+
+```
+
+
+```{r}
+#correlation matrix for the 2yo
+corr_matrix_NIRS_2y <- select (twoyrdata, c(High_Novel_RSTG_oxy, High_Novel_LSTG_oxy, adv_child, adv_maternal, adv_env, Income_to_needs, maternal_ed_yrs, haz_12, Mullen_lang_composite))
+
+colnames(corr_matrix_NIRS_2y) <- c("RSTG High TP-Novel", "LSTG High TP-Novel", "Child Adversity", "Maternal Adversity", "Environmental Adversity", "Family Income", "Maternal Education", "HAZ", "Language (Mullen)")
+
+
+rcorr(as.matrix(corr_matrix_NIRS_2y), type = c("pearson"))
+pval_2y <- corr.test(corr_matrix_NIRS_2y, adjust="none")$p
+pval_2y <- corr.test(corr_matrix_NIRS_2y, adjust="fdr")$p
+corr2y_NIRS <- cor(corr_matrix_NIRS_2y, use="pairwise.complete.obs")
+
+corrplot(corr2y_NIRS, tl.cex=0.8, tl.srt=45, p.mat = pval_2y, method = 'color', diag = FALSE, type = 'lower',
+         sig.level = c(0.001, 0.01, 0.05), pch.cex = 0.6,
+         insig = 'label_sig', pch.col = 'grey20', order = 'original', tl.col="black")
+
+
+
+corrplot(corr2y_NIRS, method = 'number', tl.cex=0.8, tl.srt=45)
+
+#adding numbers of correlation coefficients
+corrplot(corr2y_NIRS, method = 'circle', type = 'lower', insig='blank',
+         addCoef.col ='black', number.cex = 0.5, diag=FALSE, tl.cex=0.7, tl.srt=45, order = 'original')
+
+
+
+#correlation matrix for the 5yo
+corr_matrix_NIRS_5y <- select (fiveyrdata, c(High_Novel_RSTG_oxy, High_Novel_LSTG_oxy, adv_child, adv_maternal, adv_env, Income_to_needs, maternal_ed_yrs, haz_42, viq))
+
+colnames(corr_matrix_NIRS_5y) <- c("RSTG High TP-Novel", "LSTG High TP-Novel", "Child Adversity", "Maternal Adversity", "Environmental Adversity", "Family Income", "Maternal Education", "HAZ", "Language (WPPSI)")
+
+rcorr(as.matrix(corr_matrix_NIRS_5y), type = c("pearson"))
+pval_5y <- corr.test(corr_matrix_NIRS_5y, adjust="none")$p
+pval_5y <- corr.test(corr_matrix_NIRS_5y, adjust="fdr")$p
+corr5y_NIRS <- cor(corr_matrix_NIRS_5y, use="pairwise.complete.obs")
+
+corrplot(corr5y_NIRS, tl.cex=0.8, tl.srt=45, p.mat = pval_5y, method = 'color', diag = FALSE, type = 'lower',
+         sig.level = c(0.001, 0.01, 0.05), pch.cex = 0.6,
+         insig = 'label_sig', pch.col = 'grey20', order = 'original', tl.col="black")
+
+#adding numbers of correlation coefficients
+corrplot(corr5y_NIRS, method = 'circle', type = 'lower', insig='blank',
+         addCoef.col ='black', number.cex = 0.5, diag=FALSE, tl.cex=0.7, tl.srt=45, order = 'original')
+
+
+```
+
+
+#try creating a scatterplot matrix 
+
+```{r}
+
+corr_matrix_NIRS_2y
+
+# Create a scatterplot matrix showing only the lower half
+
+
+#2yo matrix 
+corr_matrix_NIRS_2y_new <- select (twoyrdata, c(High_Novel_RSTG_oxy, High_Novel_LSTG_oxy, advtot_conc, Income_to_needs, maternal_ed_yrs, haz_12, Mullen_lang_composite))
+
+class(corr_matrix_NIRS_2y_new$Mullen_lang_composite)
+corr_matrix_NIRS_2y_new$Mullen_lang_composite <- as.numeric(corr_matrix_NIRS_2y_new$Mullen_lang_composite)
+
+
+
+
+Scatter_Matrix_2yo <- ggpairs(corr_matrix_NIRS_2y_new,
+  axisLabels = "show",
+  lower = list(continuous = wrap("points", size = 0.4, color = "black")),
+  diag = list(continuous = wrap("blank")),
+  columnLabels = c("H-N RSTG", "H-N LSTG", "PS Adversity", "Income", "Mat. Ed.", "HAZ", "Language")
+)
+
+Scatter_Matrix_2yo <- Scatter_Matrix_2yo + 
+  theme(text = element_text(size = 6)) 
+
+
+Scatter_Matrix_2yo
+
+
+
+#5yo matrix
+Scatter_Matrix_5yo <- ggpairs(corr_matrix_NIRS_5y,
+  axisLabels = "show",
+  lower = list(continuous = wrap("points", size = 0.4, color = "black")),
+  diag = list(continuous = wrap("blank")),
+  columnLabels = c("H-N RSTG", "H-N LSTG", "PS Adversity", "Income", "Mat. Ed.", "HAZ", "Language")
+)
+
+Scatter_Matrix_5yo <- Scatter_Matrix_5yo + 
+  theme(text = element_text(size = 6)) 
+
+
+Scatter_Matrix_5yo
+
+
+
+```
+
+#re-create correlation matrices with total adversity score
+
+```{r}
+#correlation matrix for the 2yo
+corr_matrix_NIRS_2y <- select (twoyrdata, c(High_Novel_RSTG_oxy, High_Novel_LSTG_oxy, advtot_conc, Income_to_needs, maternal_ed_yrs, haz_12, Mullen_lang_composite))
+
+colnames(corr_matrix_NIRS_2y) <- c("RSTG High TP-Novel", "LSTG High TP-Novel", "Psychosocial Adversity", "Family Income", "Maternal Education", "HAZ", "Language (Mullen)")
+
+
+rcorr(as.matrix(corr_matrix_NIRS_2y), type = c("pearson"))
+pval_2y <- corr.test(corr_matrix_NIRS_2y, adjust="none")$p
+pval_2y <- corr.test(corr_matrix_NIRS_2y, adjust="fdr")$p
+corr2y_NIRS <- cor(corr_matrix_NIRS_2y, use="pairwise.complete.obs")
+
+corrplot(corr2y_NIRS, tl.cex=0.8, tl.srt=45, p.mat = pval_2y, method = 'color', diag = FALSE, type = 'lower',
+         sig.level = c(0.001, 0.01, 0.05), pch.cex = 0.6,
+         insig = 'label_sig', pch.col = 'grey20', order = 'original', tl.col="black")
+
+
+
+corrplot(corr2y_NIRS, method = 'number', tl.cex=0.8, tl.srt=45)
+
+#adding numbers of correlation coefficients
+corrplot(corr2y_NIRS, method = 'circle', type = 'lower', insig='blank',
+         addCoef.col ='black', number.cex = 0.5, diag=FALSE, tl.cex=0.7, tl.srt=45, order = 'original')
+
+
+
+#correlation matrix for the 5yo
+corr_matrix_NIRS_5y <- select (fiveyrdata, c(High_Novel_RSTG_oxy, High_Novel_LSTG_oxy, advtot_conc, Income_to_needs, maternal_ed_yrs, haz_42, viq))
+
+colnames(corr_matrix_NIRS_5y) <- c("RSTG High TP-Novel", "LSTG High TP-Novel", "Psychosocial Adversity", "Family Income", "Maternal Education", "HAZ", "Language (WPPSI)")
+
+rcorr(as.matrix(corr_matrix_NIRS_5y), type = c("pearson"))
+pval_5y <- corr.test(corr_matrix_NIRS_5y, adjust="none")$p
+pval_5y <- corr.test(corr_matrix_NIRS_5y, adjust="fdr")$p
+corr5y_NIRS <- cor(corr_matrix_NIRS_5y, use="pairwise.complete.obs")
+
+corrplot(corr5y_NIRS, tl.cex=0.8, tl.srt=45, p.mat = pval_5y, method = 'color', diag = FALSE, type = 'lower',
+         sig.level = c(0.001, 0.01, 0.05), pch.cex = 0.6,
+         insig = 'label_sig', pch.col = 'grey20', order = 'original', tl.col="black")
+
+#adding numbers of correlation coefficients
+corrplot(corr5y_NIRS, method = 'circle', type = 'lower', insig='blank',
+         addCoef.col ='black', number.cex = 0.5, diag=FALSE, tl.cex=0.7, tl.srt=45, order = 'original')
+
+
+```
+#re-run regressions 
+```{r}
+
+#2yr
+Adv_NIRS_Left_2yr <- lm(High_Novel_LSTG_oxy ~ advtot_conc + haz_6 + maternal_ed_yrs + Income_to_needs, data = twoyrdata)
+summary(Adv_NIRS_Left_2yr) #Review the results
+
+Adv_NIRS_Right_2yr <- lm(High_Novel_RSTG_oxy ~ advtot_conc + haz_6 + maternal_ed_yrs + Income_to_needs, data = twoyrdata)
+summary(Adv_NIRS_Right_2yr) #Review the results
+
+
+#5yr Adv => NIRS
+select_Adv_CPAScat_NIRS_Right_5yr <- lm(High_Novel_RSTG_oxy ~ haz_36 + maternal_ed_yrs + Income_to_needs, data = fiveyrdata)
+summary(select_Adv_CPAScat_NIRS_Right_5yr) #Review the results
+
+select_Adv_CPAScat_NIRS_Left_5yr <- lm(High_Novel_LSTG_oxy ~ haz_36 + maternal_ed_yrs + Income_to_needs, data = fiveyrdata)
+summary(select_Adv_CPAScat_NIRS_Left_5yr) #Review the results
+
+
+
+```
+
+#Prematurity analyses
+```{r}
+#explore # of premature babies in each cohort
+fiveyrdata$Premature <- as.factor(fiveyrdata$Premature)
+twoyrdata$Premature <- as.factor(twoyrdata$Premature)
+
+summary(twoyrdata$Premature)
+summary(fiveyrdata$Premature)
+
+
+
+#create correlation matrices including gestational age 
+corr_matrix_NIRS_2y <- select (twoyrdata, c(High_Novel_RSTG_oxy, High_Novel_LSTG_oxy, advtot_conc, Income_to_needs, maternal_ed_yrs, haz_12, Mullen_lang_composite, Gest_Age_Wks))
+
+colnames(corr_matrix_NIRS_2y) <- c("RSTG High TP-Novel", "LSTG High TP-Novel", "Psychosocial Adversity", "Family Income", "Maternal Education", "HAZ", "Language (Mullen)", "Gestational Age")
+
+
+rcorr(as.matrix(corr_matrix_NIRS_2y), type = c("pearson"))
+pval_2y <- corr.test(corr_matrix_NIRS_2y, adjust="none")$p
+corr2y_NIRS <- cor(corr_matrix_NIRS_2y, use="pairwise.complete.obs")
+
+corrplot(corr2y_NIRS, tl.cex=0.8, tl.srt=45, p.mat = pval_2y, method = 'color', diag = FALSE, type = 'lower',
+         sig.level = c(0.001, 0.01, 0.05), pch.cex = 0.6,
+         insig = 'label_sig', pch.col = 'grey20', order = 'original', tl.col="black")
+
+
+
+corrplot(corr2y_NIRS, method = 'number', tl.cex=0.8, tl.srt=45)
+
+#adding numbers of correlation coefficients
+corrplot(corr2y_NIRS, method = 'circle', type = 'lower', insig='blank',
+         addCoef.col ='black', number.cex = 0.5, diag=FALSE, tl.cex=0.7, tl.srt=45, order = 'original')
+
+
+
+
+
+
+#5yrs 
+
+#correlation matrix for the 5yo
+corr_matrix_NIRS_5y <- select (fiveyrdata, c(High_Novel_RSTG_oxy, High_Novel_LSTG_oxy, advtot_conc, Income_to_needs, maternal_ed_yrs, haz_42, viq, Gest_Age_Wks))
+
+colnames(corr_matrix_NIRS_5y) <- c("RSTG High TP-Novel", "LSTG High TP-Novel", "Psychosocial Adversity", "Family Income", "Maternal Education", "HAZ", "Language (WPPSI)", "Gestational Age (Weeks)")
+
+rcorr(as.matrix(corr_matrix_NIRS_5y), type = c("pearson"))
+pval_5y <- corr.test(corr_matrix_NIRS_5y, adjust="none")$p
+corr5y_NIRS <- cor(corr_matrix_NIRS_5y, use="pairwise.complete.obs")
+
+corrplot(corr5y_NIRS, tl.cex=0.8, tl.srt=45, p.mat = pval_5y, method = 'color', diag = FALSE, type = 'lower',
+         sig.level = c(0.001, 0.01, 0.05), pch.cex = 0.6,
+         insig = 'label_sig', pch.col = 'grey20', order = 'original', tl.col="black")
+
+#adding numbers of correlation coefficients
+corrplot(corr5y_NIRS, method = 'circle', type = 'lower', insig='blank',
+         addCoef.col ='black', number.cex = 0.5, diag=FALSE, tl.cex=0.7, tl.srt=45, order = 'original')
+
+```
+
+#do same analyses with excluding the participants who are premature 
+```{r}
+#create a dataset without the "Premature" kids
+
+dat_no_premature <- dat %>%
+  filter(Premature == "No" | is.na(Premature))
+
+
+twoyrdat_no_premature <- twoyrdata %>%
+  filter(Premature == "No" | is.na(Premature))
+
+
+fiveyrdat_no_premature <- fiveyrdata %>%
+  filter(Premature == "No" | is.na(Premature))
+
+
+
+#re-run correlation matrices with this subset
+#correlation matrix for the 2yo
+corr_matrix_NIRS_2y <- select (twoyrdat_no_premature, c(High_Novel_RSTG_oxy, High_Novel_LSTG_oxy, advtot_conc, Income_to_needs, maternal_ed_yrs, haz_12, Mullen_lang_composite))
+
+colnames(corr_matrix_NIRS_2y) <- c("RSTG High TP-Novel", "LSTG High TP-Novel", "Psychosocial Adversity", "Family Income", "Maternal Education", "HAZ", "Language (Mullen)")
+
+
+rcorr(as.matrix(corr_matrix_NIRS_2y), type = c("pearson"))
+pval_2y <- corr.test(corr_matrix_NIRS_2y, adjust="none")$p
+pval_2y <- corr.test(corr_matrix_NIRS_2y, adjust="fdr")$p
+corr2y_NIRS <- cor(corr_matrix_NIRS_2y, use="pairwise.complete.obs")
+
+corrplot(corr2y_NIRS, tl.cex=0.8, tl.srt=45, p.mat = pval_2y, method = 'color', diag = FALSE, type = 'lower',
+         sig.level = c(0.001, 0.01, 0.05), pch.cex = 0.6,
+         insig = 'label_sig', pch.col = 'grey20', order = 'original', tl.col="black")
+
+
+
+corrplot(corr2y_NIRS, method = 'number', tl.cex=0.8, tl.srt=45)
+
+#adding numbers of correlation coefficients
+corrplot(corr2y_NIRS, method = 'circle', type = 'lower', insig='blank',
+         addCoef.col ='black', number.cex = 0.5, diag=FALSE, tl.cex=0.7, tl.srt=45, order = 'original')
+
+
+
+#correlation matrix for the 5yo
+corr_matrix_NIRS_5y <- select (fiveyrdat_no_premature, c(High_Novel_RSTG_oxy, High_Novel_LSTG_oxy, advtot_conc, Income_to_needs, maternal_ed_yrs, haz_42, viq))
+
+colnames(corr_matrix_NIRS_5y) <- c("RSTG High TP-Novel", "LSTG High TP-Novel", "Psychosocial Adversity", "Family Income", "Maternal Education", "HAZ", "Language (WPPSI)")
+
+rcorr(as.matrix(corr_matrix_NIRS_5y), type = c("pearson"))
+pval_5y <- corr.test(corr_matrix_NIRS_5y, adjust="none")$p
+pval_5y <- corr.test(corr_matrix_NIRS_5y, adjust="fdr")$p
+corr5y_NIRS <- cor(corr_matrix_NIRS_5y, use="pairwise.complete.obs")
+
+corrplot(corr5y_NIRS, tl.cex=0.8, tl.srt=45, p.mat = pval_5y, method = 'color', diag = FALSE, type = 'lower',
+         sig.level = c(0.001, 0.01, 0.05), pch.cex = 0.6,
+         insig = 'label_sig', pch.col = 'grey20', order = 'original', tl.col="black")
+
+#adding numbers of correlation coefficients
+corrplot(corr5y_NIRS, method = 'circle', type = 'lower', insig='blank',
+         addCoef.col ='black', number.cex = 0.5, diag=FALSE, tl.cex=0.7, tl.srt=45, order = 'original')
+
+
+
+```
+#re-run regressions with no premature kiddos
+```{r}
+#2yr
+Adv_NIRS_Left_2yr <- lm(High_Novel_LSTG_oxy ~ advtot_conc + haz_6 + maternal_ed_yrs + Income_to_needs, data = twoyrdat_no_premature)
+summary(Adv_NIRS_Left_2yr) #Review the results
+
+Adv_NIRS_Right_2yr <- lm(High_Novel_RSTG_oxy ~ advtot_conc + haz_6 + maternal_ed_yrs + Income_to_needs, data = twoyrdat_no_premature)
+summary(Adv_NIRS_Right_2yr) #Review the results
+
+
+#5yr Adv => NIRS
+select_Adv_CPAScat_NIRS_Right_5yr <- lm(High_Novel_RSTG_oxy ~ haz_36 + maternal_ed_yrs + Income_to_needs, data = fiveyrdat_no_premature)
+summary(select_Adv_CPAScat_NIRS_Right_5yr) #Review the results
+
+select_Adv_CPAScat_NIRS_Left_5yr <- lm(High_Novel_LSTG_oxy ~ haz_36 + maternal_ed_yrs + Income_to_needs, data = fiveyrdat_no_premature)
+summary(select_Adv_CPAScat_NIRS_Left_5yr) #Review the results
+
+
+```
+
+
